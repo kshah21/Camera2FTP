@@ -1,0 +1,65 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/layout_root"
+    android:layout_width="fill_parent"
+    android:layout_height="fill_parent"
+    android:orientation="vertical"
+    android:padding="10dp"
+    android:backgroundTint="@color/dialogWhiteColor">
+
+    <TextView
+        android:id="@+id/ftp_box_endpoint_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="FTP endpoint "
+        android:layout_marginTop="50dp"/>
+
+    <EditText
+        android:id="@+id/ftp_box_endpoint"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+    </EditText>
+
+
+    <TextView
+        android:id="@+id/ftp_box_user_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Username "
+        android:layout_marginTop="50dp"/>
+
+    <EditText
+        android:id="@+id/ftp_box_user"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+    </EditText>
+
+
+    <TextView
+        android:id="@+id/ftp_box_password_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Password "
+        android:layout_marginTop="50dp"/>
+
+    <EditText
+        android:id="@+id/ftp_box_password"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+    </EditText>
+
+
+    <TextView
+        android:id="@+id/ftp_box_dest_label"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="File Destination "
+        android:layout_marginTop="50dp"/>
+
+    <EditText
+        android:id="@+id/ftp_box_dest"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+    </EditText>
+
+</LinearLayout>
