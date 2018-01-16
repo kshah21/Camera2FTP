@@ -3,12 +3,17 @@ package com.kshah21.customcamera;
 import android.Manifest;
 import android.content.Context;
 import android.content.DialogInterface;
+import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Camera;
 import android.graphics.ImageFormat;
+import android.graphics.Matrix;
+import android.graphics.RectF;
 import android.graphics.SurfaceTexture;
+import android.hardware.SensorManager;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCaptureSession;
 import android.hardware.camera2.CameraCharacteristics;
@@ -37,11 +42,14 @@ import android.util.Log;
 import android.util.Size;
 import android.util.SparseIntArray;
 import android.view.LayoutInflater;
+import android.view.OrientationEventListener;
 import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.widget.EditText;
 import android.widget.Toast;
+
+import org.w3c.dom.Text;
 
 import java.io.File;
 import java.io.FileNotFoundException;
@@ -64,11 +72,11 @@ public class MainActivity extends AppCompatActivity {
     private TextureView textureView;
 
     private FTPWrapper ftpClient;
-    private String host = "ftp.dlptest.com";
-    private String username="dlpuser@dlptest.com";
-    private String password="hZ3Xr8alJPl8TtE";
+    private String host;
+    private String username;
+    private String password;
     private int port = 21;
-    private String destDirectory="";
+    private String destDirectory;
     private boolean connectedFTP=false;
 
     private CameraDevice cameraDevice;
@@ -88,20 +96,27 @@ public class MainActivity extends AppCompatActivity {
     private String cameraBackID;
     private String cameraID;
 
+    private boolean isLandscape = false;
+    private int deviceOrientation;
+    private OrientationEventListener orientation_listener;
+
     private long lastClickTime = 0;
 
-    private static final String TAG = "TEST";
-    private static final String TAG2 = "TEST2";
-
-    private static final int REQUEST_CAMERA_PERMISSION = 256;
+    private SharedPreferences sharedPref;
 
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
+
     static {
         ORIENTATIONS.append(Surface.ROTATION_0, 90);
         ORIENTATIONS.append(Surface.ROTATION_90, 0);
         ORIENTATIONS.append(Surface.ROTATION_180, 270);
         ORIENTATIONS.append(Surface.ROTATION_270, 180);
     }
+
+    private static final String TAG = "TEST";
+    private static final String TAG2 = "TEST2";
+
+    private static final int REQUEST_CAMERA_PERMISSION = 256;
 
 
     /**
@@ -128,6 +143,16 @@ public class MainActivity extends AppCompatActivity {
         cameraID = cameraFrontID;
         checkDeviceChars();
 
+        orientation_listener = new OrientationEventListener(this, SensorManager.SENSOR_DELAY_NORMAL) {
+            @Override
+            public void onOrientationChanged(int orientation) {
+                deviceOrientation = orientation;
+            }
+        };
+
+        sharedPref = getPreferences(Context.MODE_PRIVATE);
+        readStoredPref();
+
         ftpClient = new FTPWrapper();
     }
 
@@ -135,6 +160,16 @@ public class MainActivity extends AppCompatActivity {
      * Check device characteristics for flash capabilities
      */
     private void checkDeviceChars(){
+        //Obtain current orientation
+        if(getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE)
+        {
+            isLandscape = true;
+            Log.i("Output", "Landscape ");
+        }
+        else{
+            Log.i("Output", "Portrait ");
+        }
+
         CameraManager manager = (CameraManager)getSystemService(CAMERA_SERVICE);
         CameraCharacteristics current_chars = null;
         try {
@@ -184,18 +219,62 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Reads stored FTP preferences
+     * Defaults to a test Berlin test server
+     */
+    private void readStoredPref(){
+        host = sharedPref.getString("host",null);
+        username = sharedPref.getString("username",null);
+        password = sharedPref.getString("password",null);
+        destDirectory = sharedPref.getString("directory", null);
+
+        if(host == null){
+            Log.i(TAG, "readStoredPref: initially null");
+            host = "ftp.dlptest.com";
+            username = "dlpuser";
+            password = "hZ3Xr8alJPl8TtE";
+            destDirectory = "";
+            storeFTPPrefs();
+        }
+        else{
+            Log.i(TAG, "readStoredPref: read from prefs");
+        }
+
+    }
+
+    /**
+     * Stores FTP preferences
+     */
+    private void storeFTPPrefs(){
+        SharedPreferences.Editor editor =sharedPref.edit();
+        editor.putString("host",host);
+        editor.putString("username",username);
+        editor.putString("password",password);
+        editor.putString("directory", destDirectory);
+        editor.commit();
+    }
+
+    /**
      * Begin bg thread and connect to FTP server
      */
     protected void onResume(){
         super.onResume();
         Log.i(TAG, "onResume");
+
+        if(orientation_listener.canDetectOrientation()){
+            orientation_listener.enable();
+        }
+
         startBackgroundThread();
+
         if(textureView.isAvailable()){
+            configureTransform(textureView.getWidth(),textureView.getHeight());
             openCamera();
         }
         else{
             textureView.setSurfaceTextureListener(texture_listener);
         }
+
        new Thread(new Runnable() {
             public void run() {
                 boolean status = false;
@@ -232,13 +311,16 @@ public class MainActivity extends AppCompatActivity {
     TextureView.SurfaceTextureListener texture_listener = new TextureView.SurfaceTextureListener() {
         @Override
         public void onSurfaceTextureAvailable(SurfaceTexture surface, int width, int height) {
-            Log.i(TAG, "onSurfaceTextureAvailable: ");
+            Log.i(TAG, "onSurfaceTextureAvailable: " + width + " x " + height);
+            Size temp = new Size(width, height);
+            imageDimension = temp;
+            configureTransform(width,height);
             openCamera();
         }
 
         @Override
         public void onSurfaceTextureSizeChanged(SurfaceTexture surface, int width, int height) {
-            //Do nothing for now
+            //configureTransform(width,height);
         }
 
         @Override
@@ -262,11 +344,11 @@ public class MainActivity extends AppCompatActivity {
         Log.i(TAG, "openCamera: ");
         CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
         try{
-            //cameraID = manager.getCameraIdList()[0];
             CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraID);
             StreamConfigurationMap map = characteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             assert map!=null;
-            imageDimension = map.getOutputSizes(SurfaceTexture.class)[0];
+
+            Log.i("Output Size: ", "Texture: " + imageDimension.getWidth() + " x " + imageDimension.getHeight());
 
             //Request Permissions
             if(ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA)!= PackageManager.PERMISSION_GRANTED &&
@@ -280,6 +362,7 @@ public class MainActivity extends AppCompatActivity {
             e.printStackTrace();
         }
     }
+
 
     /**
      * Handle camera open events
@@ -394,27 +477,24 @@ public class MainActivity extends AppCompatActivity {
 
         CameraManager manager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);
         try {
-            CameraCharacteristics camCharacteristics = manager.getCameraCharacteristics(cameraDevice.getId());
-            Size[] jpegSizes = null;
-            if(camCharacteristics != null){
-                jpegSizes = camCharacteristics.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP).getOutputSizes(ImageFormat.JPEG);
-            }
-            int height = 3264;
-            int width = 2448;
-            if(jpegSizes != null && jpegSizes.length > 0){
-                height = jpegSizes[0].getHeight();
-                width = jpegSizes[0].getWidth();
-            }
-            
+
+            int width = 3264;
+            int height = 2448;
             ImageReader reader = ImageReader.newInstance(width,height,ImageFormat.JPEG,1);
+            Log.i("Output Size: ", "Reader: " + reader.getWidth() + " x " + reader.getHeight());
             List<Surface> outputSurfaces = new ArrayList<Surface>(2);
             outputSurfaces.add(reader.getSurface());
             outputSurfaces.add(new Surface(textureView.getSurfaceTexture()));
             captureRequestBuilder = cameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
             captureRequestBuilder.addTarget(reader.getSurface());
-            
+
+            CameraCharacteristics characteristics = manager.getCameraCharacteristics(cameraID);
+
+            /*int sensorOrientation = characteristics.get(CameraCharacteristics.SENSOR_ORIENTATION);
             int rotation = getWindowManager().getDefaultDisplay().getRotation();
-            captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,ORIENTATIONS.get(rotation));
+            int orientation = getOrientation(rotation,sensorOrientation);*/
+
+            captureRequestBuilder.set(CaptureRequest.JPEG_ORIENTATION,getJpegOrientation(characteristics,deviceOrientation));
 
             reader.setOnImageAvailableListener(readerListener,backgroundHandler);
 
@@ -441,6 +521,65 @@ public class MainActivity extends AppCompatActivity {
     }
 
     /**
+     * Obtain correct orientation for jpeg picture based upon device rotation state
+     */
+    private int getOrientation(int rotation, int sensorOrientation) {
+        // Sensor orientation is 90 for most devices, or 270 for some devices (eg. Nexus 5X)
+        // We have to take that into account and rotate JPEG properly.
+        // For devices with orientation of 90, we simply return our mapping from ORIENTATIONS.
+        // For devices with orientation of 270, we need to rotate the JPEG 180 degrees.
+        return (ORIENTATIONS.get(rotation) + sensorOrientation + 270) % 360;
+    }
+
+    /**
+     * Obtain correct orientation for jpeg picture based upon device rotation state - second version
+     */
+    private int getJpegOrientation(CameraCharacteristics c, int devOrientation) {
+        if (devOrientation == android.view.OrientationEventListener.ORIENTATION_UNKNOWN) return 0;
+        int sensorOrientation = c.get(CameraCharacteristics.SENSOR_ORIENTATION);
+
+        // Round device orientation to a multiple of 90
+        devOrientation = (devOrientation + 45) / 90 * 90;
+
+        // Reverse device orientation for front-facing cameras
+        boolean facingFront = c.get(CameraCharacteristics.LENS_FACING) == CameraCharacteristics.LENS_FACING_FRONT;
+        if (facingFront) devOrientation = -devOrientation;
+
+        // Calculate desired JPEG orientation relative to camera orientation to make
+        // the image upright relative to the device orientation
+        int jpegOrientation = (sensorOrientation + devOrientation + 360) % 360;
+
+        return jpegOrientation;
+    }
+
+    /**
+     * Transform textureView in case of orientation change
+     */
+    private void configureTransform(int viewWidth, int viewHeight) {
+        if (null == textureView || null == imageDimension) {
+            return;
+        }
+        int rotation = getWindowManager().getDefaultDisplay().getRotation();
+        Matrix matrix = new Matrix();
+        RectF viewRect = new RectF(0, 0, viewWidth, viewHeight);
+        RectF bufferRect = new RectF(0, 0, imageDimension.getHeight(), imageDimension.getWidth());
+        float centerX = viewRect.centerX();
+        float centerY = viewRect.centerY();
+        if (Surface.ROTATION_90 == rotation || Surface.ROTATION_270 == rotation) {
+            bufferRect.offset(centerX - bufferRect.centerX(), centerY - bufferRect.centerY());
+            matrix.setRectToRect(viewRect, bufferRect, Matrix.ScaleToFit.FILL);
+            float scale = Math.max(
+                    (float) viewHeight / imageDimension.getHeight(),
+                    (float) viewWidth / imageDimension.getWidth());
+            matrix.postScale(scale, scale, centerX, centerY);
+            matrix.postRotate(90 * (rotation - 2), centerX, centerY);
+        } else if (Surface.ROTATION_180 == rotation) {
+            matrix.postRotate(180, centerX, centerY);
+        }
+        textureView.setTransform(matrix);
+    }
+
+    /**
      * Switch current camera
      */
     public void switchCamera() {
@@ -449,6 +588,7 @@ public class MainActivity extends AppCompatActivity {
             checkDeviceChars();
             closeCamera();
             reopenCamera();
+            Log.i(TAG, "switchCamera: Now on back");
 
         }
         else if (cameraID.equals(cameraBackID)) {
@@ -456,6 +596,7 @@ public class MainActivity extends AppCompatActivity {
             checkDeviceChars();
             closeCamera();
             reopenCamera();
+            Log.i(TAG, "switchCamera: Now on front");
         }
     }
 
@@ -464,6 +605,7 @@ public class MainActivity extends AppCompatActivity {
      */
     public void reopenCamera() {
         if (textureView.isAvailable()) {
+            configureTransform(textureView.getWidth(),textureView.getHeight());
             openCamera();
         } else {
             textureView.setSurfaceTextureListener(texture_listener);
@@ -485,9 +627,24 @@ public class MainActivity extends AppCompatActivity {
                 buffer.get(bytes);
 
                 Bitmap map = BitmapFactory.decodeByteArray(bytes,0,bytes.length,null);
-                Bitmap scaledMap = Bitmap.createScaledBitmap(map, 3264, 2248, false);
 
-                save(scaledMap);
+                if(!isLandscape){
+                    Log.i("Orientation", "onImageAvailable: Portrait");
+                    Matrix mtx = new Matrix();
+                    if(cameraID == cameraFrontID){
+                        Log.i("orientation", "onImageAvailable: camera front");
+                        mtx.postRotate(-90);
+                    }
+                    else{
+                        Log.i("orientation", "onImageAvailable: camera back");
+                        mtx.postRotate(90);
+                    }
+                    Bitmap rotated = Bitmap.createBitmap(map,0,0,map.getWidth(),map.getHeight(),mtx,true);
+                    save(rotated);
+                }
+                else{
+                    save(map);
+                }
             }
             catch (FileNotFoundException e){
                 e.printStackTrace();
@@ -502,16 +659,15 @@ public class MainActivity extends AppCompatActivity {
             }
         }
 
-        private void save(Bitmap scaledMap) throws IOException{
+        private void save(Bitmap map) throws IOException{
             String timeStamp = new SimpleDateFormat("yyyyMMdd_HHmmss").format(new Date());
             final String imageFileName = "/JPEG_" + timeStamp + "_" + ".jpg";
 
             final File file = new File(Environment.getExternalStorageDirectory()+imageFileName);
-            System.out.println("TEST2 " + Environment.getExternalStorageDirectory()+imageFileName);
             OutputStream output = null;
             try{
                 output = new FileOutputStream(file);
-                scaledMap.compress(Bitmap.CompressFormat.JPEG,100,output);
+                map.compress(Bitmap.CompressFormat.JPEG,100,output);
                 output.flush();
             }
             finally{
@@ -601,6 +757,7 @@ public class MainActivity extends AppCompatActivity {
      */
     protected void onPause(){
         Log.i(TAG, "onPause");
+        orientation_listener.disable();
         stopBackgroundThread();
         super.onPause();
         new Thread(new Runnable() {
@@ -718,6 +875,7 @@ public class MainActivity extends AppCompatActivity {
                                                 boolean status = false;
                                                 status = ftpClient.ftpConnect(host,username,password,port);
                                                 if(status){
+                                                    storeFTPPrefs();
                                                     runOnUiThread(new Runnable() {
                                                         @Override
                                                         public void run() {
@@ -746,6 +904,7 @@ public class MainActivity extends AppCompatActivity {
                                                 boolean status = false;
                                                 status = ftpClient.changeWorkingDirectory(destDirectory);
                                                 if(status){
+                                                    storeFTPPrefs();
                                                     runOnUiThread(new Runnable() {
                                                         @Override
                                                         public void run() {
